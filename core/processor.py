@@ -67,13 +67,14 @@ DIRECTION_NAMES = {
 
 def remove_background_border_floodfill(
     image: Image.Image,
-    tolerance: int = 28,
+    tolerance: int = 12,
     min_component_size: int = 80
 ) -> Image.Image:
     """
     Robust background removal using OpenCV border floodfill + connected component filtering.
-    Starts floodfill exclusively from borders/corners so internal features (white hair,
-    silver armor, light eyes) are never perforated with holes.
+    Starts floodfill exclusively from borders/corners with conservative tolerance so internal
+    features (light hair highlights, specular glints on skin/armor, light eyes) are never
+    perforated with holes or eroded.
     """
     img_rgba = image.convert("RGBA")
     arr = np.array(img_rgba)
@@ -102,6 +103,14 @@ def remove_background_border_floodfill(
 
     # Extract inner mask (255 = flooded background)
     bg_mask = flood_mask[1:h + 1, 1:w + 1] == 255
+
+    # Also clean ground contact shadow at bottom 10%
+    bottom_y = int(h * 0.90)
+    for y in range(bottom_y, h):
+        for x in range(w):
+            p = rgb[y, x]
+            if p[0] > 185 and p[1] > 185 and p[2] > 185:
+                bg_mask[y, x] = True
 
     # Initial foreground mask
     fg_mask = (~bg_mask).astype(np.uint8) * 255
@@ -162,8 +171,8 @@ def downscale_pixel_art(
         # Lanczos downscale preserves structural line density (eyes, curves, silhouettes)
         downscaled = img.resize((tw, th), Image.Resampling.LANCZOS)
         arr = np.array(downscaled)
-        # Snap alpha to binary to avoid semi-transparent blur halos
-        arr[:, :, 3] = np.where(arr[:, :, 3] > 96, 255, 0).astype(np.uint8)
+        # Snap alpha to binary (threshold at 64 to preserve delicate hair tips and fingertips)
+        arr[:, :, 3] = np.where(arr[:, :, 3] > 64, 255, 0).astype(np.uint8)
         return Image.fromarray(arr, mode="RGBA")
     else:
         return img.resize((tw, th), Image.Resampling.NEAREST)
