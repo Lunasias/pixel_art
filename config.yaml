@@ -1,0 +1,31 @@
+# PixelArt 8-Dir Studio Configuration
+
+app:
+  title: "PixelArt 8-Dir Studio"
+  host: "127.0.0.1"
+  port: 7860
+  share: false
+
+hardware:
+  # '4gb_lowvram' (RTX 3050 Laptop) or '8gb_standard' (RTX 5060 Ti Desktop)
+  profile: "8gb_standard"
+  device: "cuda"
+
+generation:
+  default_engine: "mock" # 'mock', 'local_sd15', 'civitai'
+  default_target_size: [64, 64]
+  default_palette: "db32"
+  symmetry_5to8: true
+  remove_background: true
+  clean_stray_pixels: true
+
+civitai:
+  api_key: "" # Optional Civitai API key for cloud generation
+  default_model_id: "22" # Pixel Art Sprite Diffusion
+  default_sdxl_model_id: "581162" # Super_PixelArt_XL_M_V1
+
+local_models:
+  sd15_checkpoint: "runwayml/stable-diffusion-v1-5"
+  sd15_controlnet_depth: "lllyasviel/control_v11f1p_sd15_depth"
+  sdxl_checkpoint: "stabilityai/stable-diffusion-xl-base-1.0"
+  sdxl_lora: "models/pixel_art_xl.safetensors"

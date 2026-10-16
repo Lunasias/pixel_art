@@ -1,0 +1,29 @@
+[project]
+name = "pixelart-8dir-studio"
+version = "0.1.0"
+description = "AI-powered 8-directional consistent pixel art character generator (PixelLab alternative)"
+authors = [
+    { name = "Lunasias" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "gradio>=4.20.0",
+]
+
+[project.optional-dependencies]
+ai = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "diffusers>=0.28.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.29.0",
+    "rembg>=2.0.50",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

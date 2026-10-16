@@ -1,0 +1,16 @@
+# Core Dependencies
+pillow>=10.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+gradio>=4.20.0
+
+# AI Background Matting (Optional, for automatic AI cutout)
+rembg>=2.0.50; extra == "ai-matting"
+
+# Local AI Generation (Optional, for local CUDA execution)
+torch>=2.1.0; extra == "local-ai"
+torchvision>=0.16.0; extra == "local-ai"
+diffusers>=0.28.0; extra == "local-ai"
+transformers>=4.40.0; extra == "local-ai"
+accelerate>=0.29.0; extra == "local-ai"
+controlnet_aux>=0.0.8; extra == "local-ai"

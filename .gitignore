@@ -1,0 +1,30 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Model Checkpoints (large files from Civitai / Hugging Face)
+models/*.safetensors
+models/*.ckpt
+models/*.bin
+models/*.pt
+
+# Outputs & Temporary Files
+outputs/*
+!outputs/.gitkeep
+*.gif
+*.webp
+*.png.tmp
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
