@@ -3,8 +3,14 @@
 app:
   title: "PixelArt 8-Dir Studio"
   host: "127.0.0.1"
-  port: 7860
+  port: 7865
   share: false
+
+forge:
+  url: "http://127.0.0.1:7860"
+  timeout: 180
+  default_checkpoint: "animagineXLV31_v31.safetensors"
+  default_lora: "pixel-art-xl-v1.1"
 
 hardware:
   # '4gb_lowvram' (RTX 3050 Laptop) or '8gb_standard' (RTX 5060 Ti Desktop)

@@ -1,11 +1,15 @@
 """
 Pixel Processing Engine
-Handles background removal, nearest-neighbor downscaling, color quantization (palettes),
-stray pixel cleaning, 5-to-8 directional mirroring, and sprite sheet / turntable assembly.
+Handles border floodfill background removal, edge-preserving pixel downscaling,
+perceptually weighted palette quantization, stray pixel cleaning, 5-to-8 directional mirroring,
+and game-ready sprite sheet / turntable assembly.
 """
 
+import io
+import zipfile
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
+import cv2
 from PIL import Image
 
 # Standard curated game palettes (RGB hex)
@@ -61,46 +65,108 @@ DIRECTION_NAMES = {
 }
 
 
-def remove_background_simple(image: Image.Image, tolerance: int = 25) -> Image.Image:
+def remove_background_border_floodfill(
+    image: Image.Image,
+    tolerance: int = 28,
+    min_component_size: int = 80
+) -> Image.Image:
     """
-    Fast background removal using corner color floodfill/distance keyer.
-    Works seamlessly on flat AI generation backgrounds without requiring GPU.
+    Robust background removal using OpenCV border floodfill + connected component filtering.
+    Starts floodfill exclusively from borders/corners so internal features (white hair,
+    silver armor, light eyes) are never perforated with holes.
     """
-    img = image.convert("RGBA")
-    data = np.array(img)
-    rgb = data[:, :, :3]
-    
-    # Sample 4 corners
-    corners = [rgb[0, 0], rgb[0, -1], rgb[-1, 0], rgb[-1, -1]]
-    bg_color = np.median(corners, axis=0)
-    
-    # Calculate Euclidean distance from bg color
-    dist = np.sqrt(np.sum((rgb.astype(np.float32) - bg_color) ** 2, axis=2))
-    mask = dist <= tolerance
-    
-    # Set matching pixels to transparent
-    data[:, :, 3][mask] = 0
-    return Image.fromarray(data, mode="RGBA")
+    img_rgba = image.convert("RGBA")
+    arr = np.array(img_rgba)
+    h, w = arr.shape[:2]
+
+    rgb = arr[:, :, :3]
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    # OpenCV floodFill requires a mask of size (h + 2, w + 2)
+    flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+
+    # Dense seed points around all four image borders
+    seeds = [
+        (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
+        (w // 2, 0), (w // 2, h - 1), (0, h // 2), (w - 1, h // 2),
+        (w // 4, 0), (3 * w // 4, 0), (w // 4, h - 1), (3 * w // 4, h - 1),
+        (0, h // 4), (0, 3 * h // 4), (w - 1, h // 4), (w - 1, 3 * h // 4)
+    ]
+
+    diff = (int(tolerance), int(tolerance), int(tolerance))
+    flags = 4 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY | cv2.FLOODFILL_FIXED_RANGE
+
+    for sx, sy in seeds:
+        if flood_mask[sy + 1, sx + 1] == 0:
+            cv2.floodFill(bgr, flood_mask, (sx, sy), 0, diff, diff, flags)
+
+    # Extract inner mask (255 = flooded background)
+    bg_mask = flood_mask[1:h + 1, 1:w + 1] == 255
+
+    # Initial foreground mask
+    fg_mask = (~bg_mask).astype(np.uint8) * 255
+
+    # Filter out tiny floating background dust
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fg_mask, connectivity=8)
+    clean_fg = np.zeros_like(fg_mask)
+
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= min_component_size:
+            clean_fg[labels == i] = 255
+
+    # If the image already had transparent areas, respect them
+    if np.any(arr[:, :, 3] < 255):
+        clean_fg = np.minimum(clean_fg, arr[:, :, 3])
+
+    arr[:, :, 3] = clean_fg
+    return Image.fromarray(arr, mode="RGBA")
+
+
+def remove_background_simple(image: Image.Image, tolerance: int = 28) -> Image.Image:
+    """
+    Backwards-compatible wrapper routing to the robust border floodfill.
+    """
+    return remove_background_border_floodfill(image, tolerance=tolerance)
 
 
 def remove_background_ai(image: Image.Image) -> Image.Image:
     """
-    AI-powered background removal via rembg (falls back to simple keyer if rembg is not installed).
+    AI background removal via rembg (falls back to border floodfill if rembg not installed).
     """
     try:
         from rembg import remove
         return remove(image)
     except Exception:
-        return remove_background_simple(image)
+        return remove_background_border_floodfill(image)
 
 
-def downscale_pixel_art(image: Image.Image, target_size: Tuple[int, int] = (64, 64)) -> Image.Image:
+def downscale_pixel_art(
+    image: Image.Image,
+    target_size: Tuple[int, int] = (64, 64),
+    preserve_details: bool = True
+) -> Image.Image:
     """
-    Strict Nearest-Neighbor downscaling to preserve hard pixel edges.
-    Never uses bilinear or bicubic filtering to avoid anti-aliasing blur.
+    Downscales images to target sprite resolution while preserving sharp retro 16/32-bit details.
+    When downscaling from high-res (e.g. 512+ to 64/128), uses high-quality Lanczos resampling
+    followed by binary alpha thresholding to prevent facial melting and broken weapon edges.
     """
     img = image.convert("RGBA")
-    return img.resize(target_size, Image.Resampling.NEAREST)
+    w, h = img.size
+    tw, th = target_size
+
+    if (w, h) == (tw, th):
+        return img
+
+    if preserve_details and (w > tw * 1.5 or h > th * 1.5):
+        # Lanczos downscale preserves structural line density (eyes, curves, silhouettes)
+        downscaled = img.resize((tw, th), Image.Resampling.LANCZOS)
+        arr = np.array(downscaled)
+        # Snap alpha to binary to avoid semi-transparent blur halos
+        arr[:, :, 3] = np.where(arr[:, :, 3] > 96, 255, 0).astype(np.uint8)
+        return Image.fromarray(arr, mode="RGBA")
+    else:
+        return img.resize((tw, th), Image.Resampling.NEAREST)
 
 
 def quantize_palette(
@@ -110,14 +176,14 @@ def quantize_palette(
     max_colors: int = 32
 ) -> Image.Image:
     """
-    Quantizes image colors to a crisp pixel art palette while preserving exact alpha transparency.
+    Quantizes image colors to a crisp retro pixel art palette using human-perceptual
+    weighted Euclidean distance (2*dR^2 + 4*dG^2 + 3*dB^2) while preserving alpha transparency.
     """
     img = image.convert("RGBA")
     data = np.array(img)
     alpha = data[:, :, 3]
     rgb = data[:, :, :3]
-    
-    # Determine palette colors
+
     if custom_palette is not None and len(custom_palette) > 0:
         pal_colors = np.array(custom_palette, dtype=np.float32)
     elif palette_name and palette_name.lower() in PALETTES:
@@ -130,18 +196,15 @@ def quantize_palette(
         out = np.dstack((res, alpha))
         return Image.fromarray(out, mode="RGBA")
 
-    # Map each visible pixel to the nearest palette color in Euclidean RGB space
-    h, w, _ = rgb.shape
     visible_mask = alpha > 0
-    
     if np.any(visible_mask):
         flat_rgb = rgb[visible_mask].astype(np.float32)
-        # Compute squared distances between pixels and palette colors
-        # (N, 1, 3) - (1, P, 3) -> (N, P)
-        dists = np.sum((flat_rgb[:, np.newaxis, :] - pal_colors[np.newaxis, :, :]) ** 2, axis=2)
+        # Perceptually weighted color difference: Human eye is most sensitive to Green, then Red, then Blue
+        diff = flat_rgb[:, np.newaxis, :] - pal_colors[np.newaxis, :, :]  # (N, P, 3)
+        weights = np.array([2.0, 4.0, 3.0], dtype=np.float32)
+        dists = np.sum((diff ** 2) * weights, axis=2)
         closest_indices = np.argmin(dists, axis=1)
-        
-        # Replace colors with palette equivalents
+
         new_rgb = np.copy(rgb)
         new_rgb[visible_mask] = pal_colors[closest_indices].astype(np.uint8)
     else:
@@ -151,30 +214,25 @@ def quantize_palette(
     return Image.fromarray(out, mode="RGBA")
 
 
-def clean_stray_pixels(image: Image.Image) -> Image.Image:
+def clean_stray_pixels(image: Image.Image, max_island_size: int = 1) -> Image.Image:
     """
-    Removes orphan single pixels (noise common in AI pixel art generators).
-    An opaque pixel with fewer than 2 orthogonal/diagonal opaque neighbors is removed.
+    Removes isolated orphan pixels (single noise specks) without clipping weapon tips,
+    hair points, or antennas. Uses connected component analysis on opaque regions so that
+    tips of connected lines (swords, staves) remain 100% intact.
     """
     img = image.convert("RGBA")
     data = np.array(img)
     alpha = data[:, :, 3]
-    opaque = (alpha > 32).astype(np.uint8)
-    
-    h, w = opaque.shape
-    padded = np.pad(opaque, 1, mode="constant", constant_values=0)
-    
-    # Count 8-way neighbors
-    neighbor_counts = (
-        padded[0:h, 0:w] + padded[0:h, 1:w+1] + padded[0:h, 2:w+2] +
-        padded[1:h+1, 0:w]                     + padded[1:h+1, 2:w+2] +
-        padded[2:h+2, 0:w] + padded[2:h+2, 1:w+1] + padded[2:h+2, 2:w+2]
-    )
-    
-    # If pixel is opaque but has < 2 neighbors, it's an isolated stray pixel
-    stray_mask = (opaque == 1) & (neighbor_counts < 2)
-    data[:, :, 3][stray_mask] = 0
-    
+    opaque = (alpha > 32).astype(np.uint8) * 255
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(opaque, connectivity=8)
+
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area <= max_island_size:
+            # Clear only completely isolated 1-pixel floaters
+            data[:, :, 3][labels == i] = 0
+
     return Image.fromarray(data, mode="RGBA")
 
 
@@ -191,18 +249,18 @@ def derive_8_directions_from_5(five_views: Dict[str, Image.Image]) -> Dict[str, 
       'SW' = mirror('SE')
       'W'  = mirror('E')
       'NW' = mirror('NE')
-    Ensures 100% geometric and limb alignment between left and right!
+    Guarantees zero limb drift and perfectly consistent character proportions.
     """
     required = ["S", "SE", "E", "NE", "N"]
     for key in required:
         if key not in five_views:
             raise ValueError(f"Missing required direction '{key}' in five_views")
-            
+
     res = dict(five_views)
     res["SW"] = mirror_horizontal(five_views["SE"])
     res["W"]  = mirror_horizontal(five_views["E"])
     res["NW"] = mirror_horizontal(five_views["NE"])
-    
+
     return {k: res[k] for k in DIRECTION_ORDER}
 
 
@@ -218,13 +276,13 @@ def slice_grid_3x3(sheet: Image.Image) -> Dict[str, Image.Image]:
     w, h = img.size
     cell_w = w // 3
     cell_h = h // 3
-    
+
     layout = [
         ["NW", "N", "NE"],
         ["W",  "CENTER", "E"],
         ["SW", "S", "SE"]
     ]
-    
+
     frames: Dict[str, Image.Image] = {}
     for r in range(3):
         for c in range(3):
@@ -232,11 +290,15 @@ def slice_grid_3x3(sheet: Image.Image) -> Dict[str, Image.Image]:
             box = (c * cell_w, r * cell_h, (c + 1) * cell_w, (r + 1) * cell_h)
             cell = img.crop(box)
             frames[name] = cell
-            
+
     return frames
 
 
-def slice_horizontal_strip(sheet: Image.Image, count: int = 8, order: Optional[List[str]] = None) -> Dict[str, Image.Image]:
+def slice_horizontal_strip(
+    sheet: Image.Image,
+    count: int = 8,
+    order: Optional[List[str]] = None
+) -> Dict[str, Image.Image]:
     """
     Slices a 1xN horizontal strip into directions.
     """
@@ -245,7 +307,7 @@ def slice_horizontal_strip(sheet: Image.Image, count: int = 8, order: Optional[L
     img = sheet.convert("RGBA")
     w, h = img.size
     cell_w = w // count
-    
+
     frames: Dict[str, Image.Image] = {}
     for i, name in enumerate(order):
         box = (i * cell_w, 0, (i + 1) * cell_w, h)
@@ -263,22 +325,22 @@ def assemble_horizontal_spritesheet(
     """
     if order is None:
         order = DIRECTION_ORDER
-        
+
     valid_frames = [frames_dict[d] for d in order if d in frames_dict]
     if not valid_frames:
         raise ValueError("No matching frames found for spritesheet assembly")
-        
+
     frame_w, frame_h = valid_frames[0].size
     n = len(valid_frames)
-    
+
     sheet_w = (frame_w * n) + (padding * (n - 1))
     sheet_h = frame_h
-    
+
     sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
     for i, frame in enumerate(valid_frames):
         x = i * (frame_w + padding)
         sheet.paste(frame, (x, 0))
-        
+
     return sheet
 
 
@@ -292,21 +354,21 @@ def assemble_compass_grid(
     sample = list(frames_dict.values())[0]
     fw, fh = sample.size
     grid = Image.new("RGBA", (fw * 3, fh * 3), (0, 0, 0, 0))
-    
+
     pos_map = {
         "NW": (0, 0), "N": (1, 0), "NE": (2, 0),
         "W":  (0, 1),             "E":  (2, 1),
         "SW": (0, 2), "S": (1, 2), "SE": (2, 2),
     }
-    
+
     for dir_key, (col, row) in pos_map.items():
         if dir_key in frames_dict:
             grid.paste(frames_dict[dir_key], (col * fw, row * fh))
-            
+
     if center_image:
         center_resized = center_image.resize((fw, fh), Image.Resampling.NEAREST)
         grid.paste(center_resized, (fw, fh))
-        
+
     return grid
 
 
@@ -318,7 +380,6 @@ def assemble_turntable(
 ) -> str:
     """
     Creates an animated turntable (.gif or .webp) rotating smoothly through all 8 angles.
-    Scales up with nearest-neighbor so it looks sharp in previews.
     """
     ordered_frames = []
     for d in DIRECTION_ORDER:
@@ -328,12 +389,12 @@ def assemble_turntable(
                 w, h = frame.size
                 frame = frame.resize((w * scale_factor, h * scale_factor), Image.Resampling.NEAREST)
             ordered_frames.append(frame)
-            
+
     if not ordered_frames:
         raise ValueError("No frames available for turntable")
-        
+
     duration = int(1000 / fps)
-    
+
     if output_path.lower().endswith(".webp"):
         ordered_frames[0].save(
             output_path,
@@ -353,3 +414,23 @@ def assemble_turntable(
             disposal=2
         )
     return output_path
+
+
+def package_frames_zip(
+    frames_dict: Dict[str, Image.Image],
+    zip_path: str,
+    prefix: str = "hero"
+) -> str:
+    """
+    Packages individual directional frames into a ZIP file ready for game engine import.
+    Example files inside zip:
+      hero_S.png, hero_SE.png, hero_E.png, hero_NE.png,
+      hero_N.png, hero_NW.png, hero_W.png, hero_SW.png
+    """
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for d in DIRECTION_ORDER:
+            if d in frames_dict:
+                img_byte_arr = io.BytesIO()
+                frames_dict[d].save(img_byte_arr, format="PNG")
+                zf.writestr(f"{prefix}_{d}.png", img_byte_arr.getvalue())
+    return zip_path

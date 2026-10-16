@@ -9,16 +9,17 @@
 
 1. **Character Consistency (รักษาภาพลักษณ์เดิมข้าม 8 ทิศทาง)**:
    - **5-to-8 Directional Symmetry**: เจน 5 ทิศทางหลัก (`S`, `SE`, `E`, `NE`, `N`) แล้วสะท้อนแนวนอน (Horizontal Mirror) เป็น `SW`, `W`, `NW` โดยอัตโนมัติ การันตีตำแหน่งข้อต่อและสัดส่วนตรงกัน 100% ป้องกันปัญหาแขนขาบิดเบี้ยว
-   - **IP-Adapter + ControlNet Guidance**: ใช้ภาพ Concept อ้างอิง 1 ภาพในการล็อกหน้าตาและเสื้อผ้า พร้อมใช้ Depth Map 3D 8 มุมมองควบคุมทิศทางการหัน
-   - **3x3 Compass Grid**: รองรับการเจนภาพทั้ง 8 ทิศทางบน Canvas ผืนเดียวรอบทิศทาง (Single-pass attention)
+   - **Local WebUI Forge API Direct Connection**: เชื่อมต่อ Stable Diffusion WebUI Forge (Stability Matrix) ท้องถิ่นผ่านพอร์ต `7860` โดยตรง ดึงโมเดลและ LoRA ที่ติดตั้งไว้แล้วมาเจนได้ทันที
+   - **Sprite Sheet Slicer & Exporter**: รองรับการตัด Character Sheet (1x8, 1x5 หรือ 3x3 Grid) ที่ได้จาก Forge/Midjourney พร้อม Mirror ทิศทางอัตโนมัติ
 2. **True Pixel Art Pipeline (ระบบแปลงเป็นพิกเซลอาร์ตแท้)**:
-   - **Strict Nearest-Neighbor Downscaling**: ย่อขนาดภาพเป็น 32x32, 48x48, 64x64 หรือ 128x128 โดยไม่เกิดอาการเบลอ (Anti-aliasing blur)
-   - **Palette Quantization**: บังคับพาเลทสีมาตรฐานเกม (DB32, Pico-8, Endesga-32, GameBoy, Sweetie-16) ป้องกันสีไล่เฉดฟุ้งของ AI
-   - **Stray Pixel Cleaner**: อัลกอริทึมลบพิกเซลขยะรอบตัวละครอัตโนมัติ
-   - **Alpha Transparency Matting**: ไดคัทฉากหลังให้เป็นพื้นหลังโปร่งใส (RGBA)
+   - **Detail-Preserving Downscaling**: ย่อขนาดภาพเป็น 32x32, 48x48, 64x64, 128x128 หรือ 256x256 โดยรักษาเส้นสายรายละเอียดตา ปาก และเครื่องประดับไม่ให้แตกเบลอ
+   - **Perceptual Palette Quantization**: บังคับพาเลทสีมาตรฐานเกม (DB32, Pico-8, Endesga-32, GameBoy, Sweetie-16) ด้วย Perceptual Weighting ไม่ทำให้สีผิวเพี้ยน
+   - **Connected-Component Stray Cleaner**: อัลกอริทึมลบพิกเซลขยะรอบตัวละครโดยไม่ตัดปลายดาบหรือปลายผม
+   - **OpenCV Border Floodfill Matting**: ไดคัทฉากหลังจากขอบนอก ไม่เจาะรูทะลุเสื้อผ้าหรือดวงตาสีขาว/เงิน (Zero Swiss-Cheese effect)
 3. **Game-Ready Export**:
    - ส่งออกเป็น Spritesheet แนวนอน (1x8 Strip)
    - ส่งออกเป็น 3x3 Compass Grid
+   - ส่งออกเป็นไฟล์ ZIP รวมรูปทั้ง 8 ทิศทางแยกไฟล์ PNG สำหรับ Drag-and-drop เข้า Game Engine ได้ทันที
    - ส่งออกเป็น Turntable Animation 360° (.gif / .webp)
    - พรีวิวหมุนรอบตัวแบบ Real-time บน Web UI
 4. **Hardware Profiles (รองรับตั้งแต่ 4GB จนถึง 8GB+ VRAM)**:
@@ -72,7 +73,7 @@ uv pip install -e ".[ai]"
 ```bash
 python app.py
 ```
-เปิดบราวเซอร์ไปที่ `http://127.0.0.1:7860`
+เปิดบราวเซอร์ไปที่ `http://127.0.0.1:7865` (แยกพอร์ตจาก WebUI Forge 7860 เพื่อไม่ให้ชนกัน)
 
 ---
 
