@@ -89,16 +89,17 @@ class ForgeWebUIGenerator(BaseGenerator):
         if not negative_prompt or not negative_prompt.strip():
             negative_prompt = (
                 "(worst quality, low quality:1.4), (character sheet:1.5), "
-                "deformed, bad anatomy, bad hands, missing fingers, extra limbs, photo, realistic"
+                "deformed, bad anatomy, bad hands, missing fingers, extra limbs, photo, realistic, "
+                "green skin, colored skin, alien skin, scenery, complex background"
             )
 
         # Direction mapping for character angle prompting
         dir_prompts = {
-            "S": "front view, facing camera",
+            "S": "front view, facing camera, looking at viewer",
             "SE": "three quarter front view, facing front-right",
             "E": "side view, right profile",
             "NE": "three quarter back view, facing back-right",
-            "N": "back view, facing away from camera",
+            "N": "back view, facing away from camera, rear view",
             "NW": "three quarter back view, facing back-left",
             "W": "side view, left profile",
             "SW": "three quarter front view, facing front-left"
@@ -108,12 +109,11 @@ class ForgeWebUIGenerator(BaseGenerator):
         views: Dict[str, Image.Image] = {}
 
         for d in directions_to_gen:
-            # Format prompt with solid green backdrop for 100% clean floodfill
             facing_cue = dir_prompts.get(d, f"facing {d}")
             pos_parts = [
                 prompt.strip(),
                 facing_cue,
-                "solid flat bright green background, chroma key green background, clean background, full body"
+                "full body, standing, solid clean white background, simple background, white backdrop"
             ]
 
             # Append LoRA if not already in prompt
@@ -127,8 +127,8 @@ class ForgeWebUIGenerator(BaseGenerator):
                 "negative_prompt": negative_prompt,
                 "steps": 28,
                 "cfg_scale": 7.0,
-                "width": 832,
-                "height": 1024,
+                "width": 640,
+                "height": 832,
                 "sampler_name": "Euler a",
                 "seed": seed,
             }
